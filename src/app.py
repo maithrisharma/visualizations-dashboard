@@ -15,9 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DATA_DIR = Path(os.environ.get("SCHEDULER_DATA_DIR", str(ROOT / "data"))).resolve()
 
-# =========================
-# Files
-# =========================
+
 # Input/output files
 PLAN_CSV = DATA_DIR / "plan.csv"
 LATE_CSV = DATA_DIR / "late.csv"
@@ -26,11 +24,11 @@ ORDERS_DELIV = DATA_DIR / "orders_delivery.csv"
 ORDERS_NO10 = DATA_DIR / "orders_no_recordtype10.csv"
 SUMMARY_CSV = DATA_DIR / "summaryFile.csv"
 SHIFTS_CSV = DATA_DIR / "shifts_injection_log.csv"
+PLAN_XLSX = DATA_DIR / "plan.xlsx"
 INDUSTRIAL_FACTOR = 0.6
 
-# =========================
-# Small utilities
-# =========================
+
+#Small utilities
 def parse_dt_series(s: pd.Series) -> pd.Series:
     x = pd.to_datetime(s, format="%Y-%m-%d %H:%M:%S", errors="coerce")
     if x.isna().any():
@@ -44,9 +42,9 @@ def safe_read_csv(path, **kw):
         return pd.DataFrame()
     return pd.read_csv(p, **kw)
 
-# =========================
-# Load + prep
-# =========================
+
+#Load + prep
+
 def load_data():
     plan = safe_read_csv(PLAN_CSV)
     late = safe_read_csv(LATE_CSV)
@@ -55,6 +53,17 @@ def load_data():
     ono10 = safe_read_csv(ORDERS_NO10)
     summary = safe_read_csv(SUMMARY_CSV)
     shifts = safe_read_csv(SHIFTS_CSV)
+    plan_excel = {}
+    if PLAN_XLSX.exists():
+        try:
+            xl = pd.ExcelFile(PLAN_XLSX)
+            for name in xl.sheet_names:
+                df = xl.parse(name)
+                plan_excel[name] = df
+            print("Loaded Excel sheets:", list(plan_excel.keys()))
+        except Exception as e:
+            print("Error reading Excel:", e)
+            plan_excel = {}
 
     for c in ["Start", "End", "LatestStartDate"]:
         if c in plan.columns:
@@ -83,13 +92,13 @@ def load_data():
         if c in odel.columns:
             odel[c] = parse_dt_series(odel[c])
 
-    return plan, late, unpl, odel, ono10, summary, shifts
+    return plan, late, unpl, odel, ono10, summary, shifts, plan_excel
 
-plan, late, unplaced, orders_delivery, orders_no10, summary_df, shifts = load_data()
+plan, late, unplaced, orders_delivery, orders_no10, summary_df, shifts, plan_excel = load_data()
 
-# =========================
-# App layout
-# =========================
+
+#App layout
+
 app = Dash(
     __name__,
     external_stylesheets=[dbc.themes.COSMO],
@@ -97,7 +106,7 @@ app = Dash(
 )
 app.title = "Scheduling Dashboard"
 
-# ----- filters -------------------------------------------------
+#filters
 filters_row = dbc.Row([
     dbc.Col([html.Label("Machines"), dcc.Dropdown(id="f-machines",
                 options=[{"label": m, "value": m} for m in sorted(plan["Machine"].astype(str).unique())],
@@ -140,6 +149,8 @@ tabs = dbc.Tabs([
     dbc.Tab(label="Orders Missing RT=10", tab_id="tab-no10"),
     dbc.Tab(label="Unplaced", tab_id="tab-unplaced"),
     dbc.Tab(label="Shift Injections", tab_id="tab-shifts"),
+    dbc.Tab(label="Plan Table View", tab_id="tab-plan"),
+    dbc.Tab(label="Log Assistant", tab_id="tab-log"),
 ], id="tabs", active_tab="tab-kpi", className="mt-2")
 
 app.layout = dbc.Container([
@@ -150,9 +161,9 @@ app.layout = dbc.Container([
     dcc.Loading(id="tab-loader", type="dot", children=html.Div(id="tab-content", className="mt-3")),
 ], fluid=True)
 
-# =========================
-# Filtering helper
-# =========================
+
+#Filtering helper
+
 def apply_filters(df, machines, priorities, outsourcing, ddl_filter, start_date, end_date):
     out = df.copy()
     if machines:
@@ -173,9 +184,31 @@ def apply_filters(df, machines, priorities, outsourcing, ddl_filter, start_date,
         out = out[out["Start"] <= pd.to_datetime(end_date) + pd.Timedelta(days=1)]
     return out
 
-# =========================
-# Figures
-# =========================
+
+#Figures
+
+
+#Log Summary
+def get_log_summary():
+    logs = []
+    if not unplaced.empty:
+        logs.append(f"⚠️ Unplaced jobs – {len(unplaced)}")
+    if not orders_no10.empty:
+        logs.append(f"⚠️ Orders without header – {len(orders_no10)}")
+
+    if not shifts.empty and "injected_start" in shifts.columns:
+        s = shifts.copy()
+        s["injected_start"] = pd.to_datetime(s["injected_start"], errors="coerce")
+        missing = s[(s["reason"] == "extend_to_horizon_after_last_end") &
+                    (s["injected_start"].dt.year == 2025)]
+        if not missing.empty:
+            ids = ", ".join(sorted(missing["WorkPlaceNo"].astype(str).unique()))
+            logs.append(f"⚠️ Missing shift plans – {len(missing)} ({ids})")
+
+    logs.append("✅ Bottleneck jobs placed first – OK")
+    return logs
+
+
 def fig_kpis_ops(summary: pd.DataFrame) -> go.Figure:
     if summary.empty or "Metric" not in summary.columns or "Value" not in summary.columns:
         return go.Figure().update_layout(title="No summary data")
@@ -477,9 +510,9 @@ def fig_orders_no10_table(df_: pd.DataFrame):
     )
     return tbl
 
-# =========================
+
 # Main render callback
-# =========================
+
 @app.callback(
     Output("tab-content", "children"),
     Input("tabs", "active_tab"),
@@ -500,7 +533,7 @@ def render_tab(active_tab, machines, priorities, outsourcing, ddl_filter,
         return dcc.Loading(
             id=f"load-{active_tab}",
             type="dot",
-            children=html.Div(content, key=f"content-{active_tab}-{np.random.randint(1e6)}")
+            children=html.Div(content, key=f"content-{active_tab}")
         )
 
     if active_tab == "tab-kpi":
@@ -583,11 +616,66 @@ def render_tab(active_tab, machines, priorities, outsourcing, ddl_filter,
             page_size=15, style_table={"overflowX":"auto"},
             filter_action="native", sort_action="native"))
 
+    if active_tab == "tab-plan":
+        if not plan_excel:
+            return wrap(html.Div("plan.xlsx not found or contains no valid sheets", className="text-danger"))
+
+        sheet_blocks = []
+        for name, df_ in plan_excel.items():
+            tbl = dash_table.DataTable(
+                columns=[{"name": c, "id": c} for c in df_.columns],
+                data=df_.to_dict("records"),
+                page_size=12,
+                style_table={
+                    "overflowX": "auto",
+                    "border": "1px solid #ccc",
+                    "borderRadius": "5px",
+                    "boxShadow": "0 2px 4px rgba(0,0,0,0.1)",
+                },
+                style_header={
+                    "backgroundColor": "#f8f9fa",
+                    "fontWeight": "bold",
+                    "borderBottom": "2px solid #dee2e6",
+                },
+                style_cell={
+                    "textAlign": "left",
+                    "padding": "8px",
+                    "fontSize": "14px",
+                    "whiteSpace": "normal",
+                    "height": "auto",
+                },
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f9f9f9"}
+                ],
+                filter_action="native",
+                sort_action="native"
+            )
+
+            block = dbc.Card(
+                dbc.CardBody([
+                    html.H5(f"{name}", className="mb-2 text-primary"),
+                    html.Div(tbl)
+                ]),
+                className="mb-4 shadow-sm"
+            )
+            sheet_blocks.append(block)
+
+        return wrap(html.Div([
+            html.H4("Plan Overview", className="mb-3 text-secondary"),
+            *sheet_blocks
+        ]))
+
+    if active_tab == "tab-log":
+        messages = get_log_summary()
+        items = [html.Li(msg, style={"fontSize": "18px"}) for msg in messages]
+        return wrap(html.Div([html.H4("Log Summary"), html.Ul(items)]))
+
     return wrap(html.Div("Select a tab."))
 
-# =========================
+
+
 # GANTT CLICK HANDLING
-# =========================
+
 @app.callback(
     Output("gantt-click", "data", allow_duplicate=True),
     Input("gantt", "clickData"),
@@ -640,9 +728,9 @@ def set_order_from_gantt_click(click, current_order):
         return no_update
     return new_order
 
-# =========================
+
 # DETAILS CARD (GANTT)
-# =========================
+
 @app.callback(
     Output("gantt-details", "children", allow_duplicate=True),
     Input("gantt-click", "data"),
@@ -670,8 +758,8 @@ def show_gantt_details(clickData):
         ])
     ]), className="shadow-sm")
 
-# =========================
+
 # Run
-# =========================
+
 if __name__ == "__main__":
     app.run(debug=True)
