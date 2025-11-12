@@ -47,6 +47,16 @@ def safe_read_csv(path, **kw):
 
 def load_data():
     plan = safe_read_csv(PLAN_CSV)
+    plan.columns = plan.columns.str.strip()
+    print(f"DATA_DIR = {DATA_DIR}")
+    print(f"PLAN_CSV path = {PLAN_CSV}")
+    print(f"plan.csv exists = {PLAN_CSV.exists()}")
+
+    if PLAN_CSV.exists():
+        print(f"plan.csv columns = {list(pd.read_csv(PLAN_CSV, nrows=0).columns)}")
+        print(f"plan (after load) columns = {plan.columns.tolist()}")
+    else:
+        print("plan.csv NOT FOUND")
     late = safe_read_csv(LATE_CSV)
     unpl = safe_read_csv(UNPLACED_CSV)
     odel = safe_read_csv(ORDERS_DELIV)
@@ -70,7 +80,17 @@ def load_data():
             plan[c] = parse_dt_series(plan[c])
     if "WorkPlaceNo" in plan.columns and "Machine" not in plan.columns:
         plan["Machine"] = plan["WorkPlaceNo"].astype(str)
+    priority_col = next((c for c in plan.columns if c.lower() == "prioritygroup"), None)
+
     pg_map = {0: "BottleNeck", 1: "Non-BottleNeck", 2: "Other"}
+
+    if priority_col:
+        plan["PriorityLabel"] = plan[priority_col].map(pg_map).fillna("Other")
+        print(f"PriorityGroup found as '{priority_col}' → mapped successfully")
+    else:
+        print("PriorityGroup NOT found in any case → defaulting to 'Other'")
+        plan["PriorityLabel"] = "Other"
+
     plan["PriorityLabel"] = plan.get("PriorityGroup", 2).map(pg_map).fillna("Other")
     plan["IsOutsourcingFlag"] = plan.get("IsOutsourcing", False).astype(bool)
     plan["HasDeadline"] = plan["LatestStartDate"].notna()
