@@ -39,15 +39,26 @@ def parse_dt_series(s: pd.Series) -> pd.Series:
 def safe_read_csv(path, **kw):
     p = Path(path)
     if not p.exists():
+        print(f"NOT FOUND: {p}")
         return pd.DataFrame()
-    return pd.read_csv(p, **kw)
+    df = pd.read_csv(p, **kw)
+    if not df.empty:
+        df.columns = df.columns.str.strip()
+        print(f"LOADED {p.name}: {len(df)} rows, columns: {list(df.columns)}")
+    else:
+        print(f"EMPTY: {p.name}")
+    return df
 
 
 #Load + prep
 
 def load_data():
     plan = safe_read_csv(PLAN_CSV)
-    plan.columns = plan.columns.str.strip()
+    if not plan.empty:
+        plan.columns = plan.columns.str.strip()
+        print(f"LOADED plan.csv: {len(plan)} rows, columns: {list(plan.columns)}")
+    else:
+        print("WARNING: plan.csv is empty or missing! Using empty DataFrame.")
     print(f"DATA_DIR = {DATA_DIR}")
     print(f"PLAN_CSV path = {PLAN_CSV}")
     print(f"plan.csv exists = {PLAN_CSV.exists()}")
@@ -75,35 +86,40 @@ def load_data():
             print("Error reading Excel:", e)
             plan_excel = {}
 
-    for c in ["Start", "End", "LatestStartDate"]:
-        if c in plan.columns:
-            plan[c] = parse_dt_series(plan[c])
-    if "WorkPlaceNo" in plan.columns and "Machine" not in plan.columns:
-        plan["Machine"] = plan["WorkPlaceNo"].astype(str)
-    priority_col = next((c for c in plan.columns if c.lower() == "prioritygroup"), None)
+        # === SAFE PROCESSING ===
+        if not plan.empty:
+            for c in ["Start", "End", "LatestStartDate"]:
+                if c in plan.columns:
+                    plan[c] = parse_dt_series(plan[c])
 
-    pg_map = {0: "BottleNeck", 1: "Non-BottleNeck", 2: "Other"}
+            if "WorkPlaceNo" in plan.columns and "Machine" not in plan.columns:
+                plan["Machine"] = plan["WorkPlaceNo"].astype(str)
 
-    if priority_col:
-        plan["PriorityLabel"] = plan[priority_col].map(pg_map).fillna("Other")
-        print(f"PriorityGroup found as '{priority_col}' → mapped successfully")
-    else:
-        print("PriorityGroup NOT found in any case → defaulting to 'Other'")
-        plan["PriorityLabel"] = "Other"
+            # PriorityLabel
+            pg_map = {0: "BottleNeck", 1: "Non-BottleNeck", 2: "Other"}
+            priority_col = next((c for c in plan.columns if c.lower() == "prioritygroup"), None)
+            if priority_col:
+                plan["PriorityLabel"] = plan[priority_col].map(pg_map).fillna("Other")
+            else:
+                plan["PriorityLabel"] = "Other"
 
-    plan["PriorityLabel"] = plan.get("PriorityGroup", 2).map(pg_map).fillna("Other")
-    plan["IsOutsourcingFlag"] = plan.get("IsOutsourcing", False).astype(bool)
-    plan["HasDeadline"] = plan["LatestStartDate"].notna()
-    plan["IdleBeforeReal"] = plan.get("IdleBeforeReal", 0)
-    plan["IdleBefore"] = (plan["IdleBeforeReal"] / INDUSTRIAL_FACTOR).round().astype("Int64")
-    if "Duration" in plan.columns:
-        plan["DurationIndustrial"] = pd.to_numeric(plan["Duration"], errors="coerce")
-    else:
-        dr = pd.to_numeric(plan.get("DurationReal", np.nan), errors="coerce")
-        plan["DurationIndustrial"] = (dr / INDUSTRIAL_FACTOR)
-    plan["DurationIndustrial"] = plan["DurationIndustrial"].round().astype("Int64")
-    if "DurationReal" not in plan.columns and "Duration" in plan.columns:
-        plan["DurationReal"] = pd.to_numeric(plan["Duration"], errors="coerce") * INDUSTRIAL_FACTOR
+            plan["PriorityLabel"] = plan.get("PriorityGroup", 2).map(pg_map).fillna("Other")
+            plan["IsOutsourcingFlag"] = plan.get("IsOutsourcing", False).astype(bool)
+            plan["HasDeadline"] = plan["LatestStartDate"].notna()
+            plan["IdleBeforeReal"] = plan.get("IdleBeforeReal", 0)
+            plan["IdleBefore"] = (plan["IdleBeforeReal"] / INDUSTRIAL_FACTOR).round().astype("Int64")
+            if "Duration" in plan.columns:
+                plan["DurationIndustrial"] = pd.to_numeric(plan["Duration"], errors="coerce")
+            else:
+                dr = pd.to_numeric(plan.get("DurationReal", np.nan), errors="coerce")
+            plan["DurationIndustrial"] = (dr / INDUSTRIAL_FACTOR)
+            plan["DurationIndustrial"] = plan["DurationIndustrial"].round().astype("Int64")
+            if "DurationReal" not in plan.columns and "Duration" in plan.columns:
+                plan["DurationReal"] = pd.to_numeric(plan["Duration"], errors="coerce") * INDUSTRIAL_FACTOR
+        else:
+            # Create minimal columns to avoid crashes later
+            for col in ["Machine", "PriorityLabel", "IsOutsourcingFlag", "HasDeadline", "DurationIndustrial"]:
+                plan[col] = pd.Series(dtype='object')
 
     for c in ["Start", "Allowed", "End"]:
         if c in late.columns:
