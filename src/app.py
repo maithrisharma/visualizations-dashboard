@@ -55,7 +55,6 @@ def safe_read_csv(path, **kw):
 def load_data():
     plan = safe_read_csv(PLAN_CSV)
     if not plan.empty:
-        plan.columns = plan.columns.str.strip()
         print(f"LOADED plan.csv: {len(plan)} rows, columns: {list(plan.columns)}")
     else:
         print("WARNING: plan.csv is empty or missing! Using empty DataFrame.")
@@ -103,16 +102,16 @@ def load_data():
             else:
                 plan["PriorityLabel"] = "Other"
 
-            plan["PriorityLabel"] = plan.get("PriorityGroup", 2).map(pg_map).fillna("Other")
+
             plan["IsOutsourcingFlag"] = plan.get("IsOutsourcing", False).astype(bool)
             plan["HasDeadline"] = plan["LatestStartDate"].notna()
             plan["IdleBeforeReal"] = plan.get("IdleBeforeReal", 0)
             plan["IdleBefore"] = (plan["IdleBeforeReal"] / INDUSTRIAL_FACTOR).round().astype("Int64")
+            dr = pd.to_numeric(plan.get("DurationReal", np.nan), errors="coerce")
             if "Duration" in plan.columns:
                 plan["DurationIndustrial"] = pd.to_numeric(plan["Duration"], errors="coerce")
             else:
-                dr = pd.to_numeric(plan.get("DurationReal", np.nan), errors="coerce")
-            plan["DurationIndustrial"] = (dr / INDUSTRIAL_FACTOR)
+                plan["DurationIndustrial"] = dr / INDUSTRIAL_FACTOR
             plan["DurationIndustrial"] = plan["DurationIndustrial"].round().astype("Int64")
             if "DurationReal" not in plan.columns and "Duration" in plan.columns:
                 plan["DurationReal"] = pd.to_numeric(plan["Duration"], errors="coerce") * INDUSTRIAL_FACTOR
@@ -144,8 +143,7 @@ app.title = "Scheduling Dashboard"
 
 #filters
 filters_row = dbc.Row([
-    dbc.Col([html.Label("Machines"), dcc.Dropdown(id="f-machines",
-                options=[{"label": m, "value": m} for m in sorted(plan["Machine"].astype(str).unique())],
+    dbc.Col([html.Label("Machines"), dcc.Dropdown(id="f-machines",options=[{"label": m, "value": m} for m in sorted(plan["Machine"].astype(str).unique())] if not plan.empty and "Machine" in plan.columns else [],
                 value=[], multi=True, placeholder="All machines")], md=3),
     dbc.Col([html.Label("Priority Group"), dcc.Dropdown(id="f-priority",
                 options=[{"label": k, "value": k} for k in ["BottleNeck","Non-BottleNeck","Other"]],
@@ -168,7 +166,7 @@ date_row = dbc.Row([
                 end_date=(plan["Start"].min() + timedelta(days=30)).date() if not plan.empty else None,
                 display_format="DD-MM-YYYY", minimum_nights=0)], md=8),
     dbc.Col([html.Label("Select Order (for Order Routing)"), dcc.Dropdown(id="order-select",
-                options=[{"label": o, "value": o} for o in sorted(plan["OrderNo"].astype(str).unique())],
+                options=[{"label": o, "value": o} for o in sorted(plan["OrderNo"].astype(str).unique())] if not plan.empty and "OrderNo" in plan.columns else [],
                 value=None, placeholder="Pick an order…")], md=4),
 ], className="g-3 mb-1")
 
