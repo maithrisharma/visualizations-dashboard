@@ -1,5 +1,6 @@
 import os
-
+import json
+import hashlib
 import pandas as pd
 import numpy as np
 from datetime import timedelta
@@ -233,6 +234,7 @@ app.layout = dbc.Container([
     filter_collapse,
     dbc.Card(dbc.CardBody(tabs), className="shadow-sm"),
     dcc.Store(id="gantt-click", data=None),
+    dcc.Store(id="gantt-relayout", data={}),
     dcc.Loading(id="tab-loader", type="dot", children=html.Div(id="tab-content", className="mt-3")),
 ], fluid=True)
 
@@ -398,38 +400,84 @@ def fig_kpis_orders_from_summary(summary: pd.DataFrame) -> go.Figure:
     return fig
 
 def fig_gantt(df):
+    """Return a Plotly timeline that respects stored zoom state."""
     if df.empty:
-        return go.Figure().update_layout(title="No data in selected filters")
+        empty_fig = go.Figure()
+        empty_fig.update_layout(title="No data in selected filters")
+        return empty_fig
+
     df = df.sort_values("Start").copy()
+
+    # Industrial duration fallback
     if "DurationIndustrial" not in df.columns:
         if "Duration" in df.columns:
-            df["DurationIndustrial"] = pd.to_numeric(df["Duration"], errors="coerce").round().astype("Int64")
+            df["DurationIndustrial"] = (
+                pd.to_numeric(df["Duration"], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
         else:
-            df["DurationIndustrial"] = (pd.to_numeric(df.get("DurationReal", np.nan), errors="coerce") / INDUSTRIAL_FACTOR).round().astype("Int64")
-    df['End'] = np.where(df['DurationIndustrial'] == 0, df['Start'] + timedelta(minutes=1), df['End'])
+            df["DurationIndustrial"] = (
+                pd.to_numeric(df.get("DurationReal", np.nan), errors="coerce")
+                / INDUSTRIAL_FACTOR
+            ).round().astype("Int64")
 
-    df["StartStr"] = pd.to_datetime(df["Start"], errors="coerce").dt.strftime("%d-%m-%Y %H:%M").fillna("")
-    df["EndStr"]   = pd.to_datetime(df["End"],   errors="coerce").dt.strftime("%d-%m-%Y %H:%M").fillna("")
-    df["LSDstr"]   = pd.to_datetime(df.get("LatestStartDate"), errors="coerce").dt.strftime("%d-%m-%Y %H:%M").fillna("")
-    df["IsOutLbl"] = df.get("IsOutsourcingFlag", False).map(lambda x: "Yes" if bool(x) else "No").astype(str)
+    # Zero-duration → 1-minute bar
+    df["End"] = np.where(
+        df["DurationIndustrial"] == 0,
+        df["Start"] + pd.Timedelta(minutes=1),
+        df["End"],
+    )
+
+    # Human-readable strings for hover
+    df["StartStr"] = pd.to_datetime(df["Start"], errors="coerce") \
+        .dt.strftime("%d-%m-%Y %H:%M").fillna("")
+    df["EndStr"]   = pd.to_datetime(df["End"],   errors="coerce") \
+        .dt.strftime("%d-%m-%Y %H:%M").fillna("")
+    df["LSDstr"]   = pd.to_datetime(df.get("LatestStartDate"), errors="coerce") \
+        .dt.strftime("%d-%m-%Y %H:%M").fillna("")
+    df["IsOutLbl"] = df.get("IsOutsourcingFlag", False) \
+        .map(lambda x: "Yes" if bool(x) else "No").astype(str)
 
     fig = px.timeline(
-        df, x_start="Start", x_end="End", y="Machine",
-        color="PriorityLabel", title="Gantt Schedule",
-        custom_data=["job_id","OrderNo","OrderPos","DurationIndustrial","LSDstr","IsOutLbl","StartStr","EndStr"],
-        hover_data=[], text="OrderNo"
+        df,
+        x_start="Start",
+        x_end="End",
+        y="Machine",
+        color="PriorityLabel",
+        title="Gantt Schedule",
+        custom_data=[
+            "job_id", "OrderNo", "OrderPos", "DurationIndustrial",
+            "LSDstr", "IsOutLbl", "StartStr", "EndStr"
+        ],
+        hover_data=[],
+        text="OrderNo",
     )
+
     fig.update_traces(textposition="inside")
     fig.update_traces(
         hovertemplate=(
-            "<b>%{customdata[0]}</b><br>Order: %{customdata[1]} | Pos: %{customdata[2]}<br>"
-            "Machine: %{y}<br>Start: %{customdata[6]}<br>End: %{customdata[7]}<br>"
-            "Duration (industrial min): %{customdata[3]}<br>Latest Start Date: %{customdata[4]}<br>Outsourcing: %{customdata[5]}"
-            "<extra></extra>"
+            "<b>%{customdata[0]}</b><br>"
+            "Order: %{customdata[1]} | Pos: %{customdata[2]}<br>"
+            "Machine: %{y}<br>"
+            "Start: %{customdata[6]}<br>End: %{customdata[7]}<br>"
+            "Duration (industrial min): %{customdata[3]}<br>"
+            "Latest Start Date: %{customdata[4]}<br>"
+            "Outsourcing: %{customdata[5]}<extra></extra>"
         )
     )
     fig.update_yaxes(autorange="reversed")
-    fig.update_layout(uirevision="gantt", height=700, margin=dict(l=20,r=20,t=50,b=20))
+
+    view_key = f"{df['Start'].min()}_{df['Start'].max()}_" + \
+               "_".join(sorted(df["Machine"].unique()))
+    uirevision = hashlib.md5(view_key.encode()).hexdigest()[:12]
+
+    fig.update_layout(
+        uirevision=uirevision,  # ← **THIS LINE ONLY**
+        height=700,
+        margin=dict(l=20, r=20, t=50, b=20),
+    )
+    # ─────────────────────────────────
     return fig
 
 def order_routing_figure(df, order_no):
@@ -602,6 +650,34 @@ def toggle_filters(n, is_open):
         return new_state, label
     return is_open, "Show Filters"
 
+
+@app.callback(
+    Output("gantt-relayout", "data"),
+    Input("gantt", "relayoutData"),
+    Input("reset-zoom", "n_clicks"),
+    prevent_initial_call=True,
+)
+def update_gantt_zoom(relayout_data, reset_clicks):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return no_update
+
+    trigger = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    # ---- ONLY REAL USER CLICK RESETS ----
+    if trigger == "reset-zoom" and reset_clicks is not None and reset_clicks > 0:
+        return {}
+
+    if trigger == "gantt" and relayout_data:
+        x0 = relayout_data.get("xaxis.range[0]")
+        x1 = relayout_data.get("xaxis.range[1]")
+        if x0 and x1:
+            return {"x0": x0, "x1": x1}
+        if relayout_data.get("xaxis.autorange"):
+            return {}
+    return no_update
+
+
 @app.callback(
     Output("tab-content", "children"),
     Input("tabs", "active_tab"),
@@ -612,10 +688,12 @@ def toggle_filters(n, is_open):
     Input("f-dates", "start_date"),
     Input("f-dates", "end_date"),
     Input("order-select", "value"),
-    Input("gantt-click", "data")
+    Input("gantt-click", "data"),
+    Input("gantt-relayout", "data"),
+    prevent_initial_call=True
 )
 def render_tab(active_tab, machines, priorities, outsourcing, ddl_filter,
-               d0, d1, picked_order, gantt_click):
+               d0, d1, picked_order, gantt_click, gantt_zoom_state):
     df = apply_filters(plan, machines, priorities, outsourcing, ddl_filter, d0, d1)
 
     def wrap(content):
@@ -638,10 +716,26 @@ def render_tab(active_tab, machines, priorities, outsourcing, ddl_filter,
         ])
 
     if active_tab == "tab-gantt":
+        print("=== GANTT TAB RENDER ===")
+        print("gantt_zoom_state (from Input):", gantt_zoom_state)
+
+        fig = fig_gantt(df)  # ← build with unique uirevision
+
+        if gantt_zoom_state and "x0" in gantt_zoom_state and "x1" in gantt_zoom_state:
+            print("APPLYING ZOOM:", gantt_zoom_state["x0"], "→", gantt_zoom_state["x1"])
+            fig.update_xaxes(
+                range=[gantt_zoom_state["x0"], gantt_zoom_state["x1"]],
+                fixedrange=False  # still allow panning
+            )
+        else:
+            print("NO ZOOM → autorange")
+            fig.update_xaxes(autorange=True)
+
         return wrap([
-            dcc.Graph(id="gantt", figure=fig_gantt(df),
-                      config={"modeBarButtonsToAdd": ["downloadImage"], "displayModeBar": True}),
-            html.Div(id="gantt-details", className="mt-2")
+            html.Div([dbc.Button("Reset zoom", id="reset-zoom", size="sm", color="secondary")],
+                     className="mb-2 text-center"),
+            dcc.Graph(id="gantt", figure=fig, config={"displayModeBar": True}),
+            html.Div(id="gantt-details")
         ])
 
     if active_tab == "tab-routing":

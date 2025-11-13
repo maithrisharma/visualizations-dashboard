@@ -1,37 +1,37 @@
 Metric,Value
-Eligible ops (60/115) before scheduling,2928
-% ops already late (pre),51.4
-Already late (input),1505
-On-time possible,1377
-On-time (fixable),782
-Late jobs completed,1503
-Saved,56.79
-Scheduled jobs,2926
-Late jobs (beyond configured grace),1977
+Eligible ops (60/115) before scheduling,2951
+% ops already late (pre),50.8
+Already late (input),1499
+On-time possible,1406
+On-time (fixable),780
+Late jobs completed,1497
+Saved,55.48
+Scheduled jobs,2949
+Late jobs (beyond configured grace),1996
 Unplaced jobs,2
-Unique orders (scheduled),834
-Unique machines (scheduled),107
-Total real minutes,748686
-Total industrial minutes,1247810
-First start,2025-11-12 17:32:00
-Last end,2026-07-01 10:35:00
-Total delay in shift time (real),3479237
-Total delay in shift time (industrial),5798728
-% On time (Start <= LSD),28.3
-% Within 1 day grace,30.59
-% Within 2 days grace,32.43
-% Within 3 days grace,33.87
-% Within 4 days grace,34.42
-% Within 5 days grace,35.06
-% Within 6 days grace,36.06
-% Within 7 days grace,37.59
-% Beyond 7 days grace,62.41
-% Orders On time (Delivery <= SupposedDate),30.46
-% Orders Within 1 day grace,33.69
-% Orders Within 2 days grace,35.13
-% Orders Within 3 days grace,37.29
-% Orders Within 4 days grace,38.49
-% Orders Within 5 days grace,39.09
-% Orders Within 6 days grace,40.65
-% Orders Within 7 days grace,41.73
-% Orders Beyond 7 days grace,58.27
+Unique orders (scheduled),837
+Unique machines (scheduled),106
+Total real minutes,726656
+Total industrial minutes,1211093
+First start,2025-11-13 15:25:00
+Last end,2026-06-18 11:17:00
+Total delay in shift time (real),3281567
+Total delay in shift time (industrial),5469278
+% On time (Start <= LSD),28.01
+% Within 1 day grace,30.11
+% Within 2 days grace,32.32
+% Within 3 days grace,34.01
+% Within 4 days grace,35.74
+% Within 5 days grace,36.42
+% Within 6 days grace,37.57
+% Within 7 days grace,39.27
+% Beyond 7 days grace,60.73
+% Orders On time (Delivery <= SupposedDate),30.11
+% Orders Within 1 day grace,32.74
+% Orders Within 2 days grace,34.77
+% Orders Within 3 days grace,36.68
+% Orders Within 4 days grace,38.59
+% Orders Within 5 days grace,40.02
+% Orders Within 6 days grace,40.86
+% Orders Within 7 days grace,42.17
+% Orders Beyond 7 days grace,57.83
