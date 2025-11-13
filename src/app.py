@@ -141,10 +141,26 @@ app = Dash(
 )
 app.title = "Scheduling Dashboard"
 
+plan_non_other = plan[plan["PriorityGroup"].isin([0,1])].copy()
+plan_non_other["DurationReal"] = pd.to_numeric(plan_non_other.get("DurationReal", np.nan), errors="coerce").fillna(0)
+machine_occupancy = (
+    plan_non_other.groupby("Machine", as_index=False)["DurationReal"]
+    .sum()
+    .sort_values("DurationReal", ascending=False)
+)
+
+# Pick top 15 machines by total duration
+default_machines = machine_occupancy["Machine"].astype(str).head(15).tolist()
+print("Default 15 machines (by occupancy):", default_machines)
+
+
 #filters
 filters_row = dbc.Row([
-    dbc.Col([html.Label("Machines"), dcc.Dropdown(id="f-machines",options=[{"label": m, "value": m} for m in sorted(plan["Machine"].astype(str).unique())] if not plan.empty and "Machine" in plan.columns else [],
-                value=[], multi=True, placeholder="All machines")], md=3),
+    dbc.Col([html.Label("Machines"), dcc.Dropdown(
+        id="f-machines",
+        options=[{"label": m, "value": m} for m in sorted(plan["Machine"].astype(str).unique())] if not plan.empty and "Machine" in plan.columns else [],
+                value= default_machines,
+        multi=True, placeholder="All machines")], md=3),
     dbc.Col([html.Label("Priority Group"), dcc.Dropdown(id="f-priority",
                 options=[{"label": k, "value": k} for k in ["BottleNeck","Non-BottleNeck","Other"]],
                 value=[], multi=True, placeholder="All priorities")], md=3),
