@@ -179,7 +179,7 @@ date_row = dbc.Row([
                 min_date_allowed=plan["Start"].min().date() if not plan.empty else None,
                 max_date_allowed=plan["End"].max().date() if not plan.empty else None,
                 start_date=plan["Start"].min().date() if not plan.empty else None,
-                end_date=(plan["Start"].min() + timedelta(days=30)).date() if not plan.empty else None,
+                end_date=(plan["Start"].min() + timedelta(days=7)).date() if not plan.empty else None,
                 display_format="DD-MM-YYYY", minimum_nights=0)], md=8),
     dbc.Col([html.Label("Select Order (for Order Routing)"), dcc.Dropdown(id="order-select",
                 options=[{"label": o, "value": o} for o in sorted(plan["OrderNo"].astype(str).unique())] if not plan.empty and "OrderNo" in plan.columns else [],
@@ -203,9 +203,34 @@ tabs = dbc.Tabs([
     dbc.Tab(label="Log Assistant", tab_id="tab-log"),
 ], id="tabs", active_tab="tab-kpi", className="mt-2")
 
+filter_header = dbc.Row([
+    dbc.Col(html.H2("Scheduling Dashboard", className="mt-2 mb-2"), md=10),
+    dbc.Col(
+        dbc.Button(
+            "Show Filters",
+            id="toggle-filters",
+            color="primary",
+            outline=True,
+            className="mt-2 mb-2",
+            style={"fontWeight": "500"}
+        ),
+        md=2, style={"textAlign": "right"}
+    )
+], align="center")
+
+filter_collapse = dbc.Collapse(
+    dbc.Card(
+        dbc.CardBody([filters_row, date_row]),
+        className="shadow-sm mb-3",
+        style={"border": "1px solid #ddd"}
+    ),
+    id="filter-collapse",
+    is_open=False
+)
+
 app.layout = dbc.Container([
-    html.H2("Scheduling Dashboard", className="mt-3 mb-2"),
-    dbc.Card(dbc.CardBody([filters_row, date_row]), className="mb-3 shadow-sm"),
+    filter_header,
+    filter_collapse,
     dbc.Card(dbc.CardBody(tabs), className="shadow-sm"),
     dcc.Store(id="gantt-click", data=None),
     dcc.Loading(id="tab-loader", type="dot", children=html.Div(id="tab-content", className="mt-3")),
@@ -562,6 +587,20 @@ def fig_orders_no10_table(df_: pd.DataFrame):
 
 
 # Main render callback
+
+@app.callback(
+    Output("filter-collapse", "is_open"),
+    Output("toggle-filters", "children"),
+    Input("toggle-filters", "n_clicks"),
+    State("filter-collapse", "is_open"),
+    prevent_initial_call=True
+)
+def toggle_filters(n, is_open):
+    if n:
+        new_state = not is_open
+        label = "Hide Filters" if new_state else "Show Filters"
+        return new_state, label
+    return is_open, "Show Filters"
 
 @app.callback(
     Output("tab-content", "children"),
